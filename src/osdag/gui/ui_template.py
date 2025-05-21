@@ -750,7 +750,7 @@ class Window(QMainWindow):
                 pixmap = QPixmap(option[3])
                 im.setPixmap(pixmap)
                 i = i + 30
-                im.setFixedSize(100, 100)
+                im.setFixedSize(im.size())
                 in_layout2.addWidget(im, j, 2, 1, 1)
 
             if type == TYPE_IMAGE_COMPRESSION:
@@ -865,6 +865,7 @@ class Window(QMainWindow):
         else:
             for t in updated_list:
                 for key_name in t[0]:
+                    
                     key_changed = self.dockWidgetContents.findChild(QtWidgets.QWidget, key_name)
                     self.on_change_connect(key_changed, updated_list, data, main)
                     print(f"key_name{key_name} \n key_changed{key_changed}  \n self.on_change_connect ")
@@ -2133,7 +2134,24 @@ class Window(QMainWindow):
                     action.setEnabled(True)
                 fName = str('./ResourceFiles/images/3d.png')
                 file_extension = fName.split(".")[-1]
+
+                # if file_extension == 'png':
+                #     self.display.ExportToImage(fName)
+                #     im = Image.open('./ResourceFiles/images/3d.png')
+                #     w,h=im.size
+                #     if(w< 640 or h < 360):
+                #         print('Re-taking Screenshot')
+                #         self.resize(700,500)
+                #         self.outputDock.hide()
+                #         self.inputDock.hide()
+                #         self.textEdit.hide()
+                #         QTimer.singleShot(0, lambda:self.retakeScreenshot(fName))
+
             else:
+                for fName in ['3d.png', 'top.png',
+                              'front.png', 'side.png']:
+                    with open("./ResourceFiles/images/"+fName, 'w'):
+                        pass
                 self.display.EraseAll()
                 for chkbox in main.get_3d_components(main):
                     self.frame.findChild(QtWidgets.QCheckBox, chkbox[0]).setEnabled(False)
