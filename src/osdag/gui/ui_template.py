@@ -750,7 +750,7 @@ class Window(QMainWindow):
                 pixmap = QPixmap(option[3])
                 im.setPixmap(pixmap)
                 i = i + 30
-                im.setFixedSize(im.size())
+                im.setFixedSize(100, 100)
                 in_layout2.addWidget(im, j, 2, 1, 1)
 
             if type == TYPE_IMAGE_COMPRESSION:
