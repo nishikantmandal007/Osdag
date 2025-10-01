@@ -23,10 +23,10 @@ import logging
 import math
 
 
-import pyswarm
+# import pyswarm
 import numpy as np
-from pyswarms.single.global_best import GlobalBestPSO
-from pyswarm import pso
+# from pyswarms.single.global_best import GlobalBestPSO
+# from pyswarm import pso
 from ...Common import *
 # from ..connection.moment_connection import MomentConnection
 from ...utils.common.material import *
