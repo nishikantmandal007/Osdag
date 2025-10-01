@@ -1,5 +1,6 @@
 # optimised_plate_girder_refactored.py
 
+import numpy as np
 from .ISection import ISection
 from .notch import Notch
 from .plate import Plate
@@ -169,14 +170,16 @@ class PlateGirder:
             ])
 
         stiffners = fuse_models(stiffners)
-        welds = fuse_models(welds)
+        fused_welds = fuse_models(welds)
         display.DisplayShape(ISection_model, update=True)
         display.DisplayShape(center_plate, update=True)
         display.DisplayShape(stiffners, material=Graphic3d_NOM_ALUMINIUM, update=True)
         display.DisplayShape(longitudinal_weld, color="red", update=True)
-        display.DisplayShape(welds, color="red", update=True)
+        display.DisplayShape(fused_welds, color="red", update=True)
         start_display()
 
         plate_girder_model = BRepAlgoAPI_Fuse(BRepAlgoAPI_Fuse(center_plate, ISection_model).Shape(), stiffners)
-        plate_girder_model = BRepAlgoAPI_Fuse(plate_girder_model, welds).Shape()
-        return plate_girder_model
+        for weld in welds:
+            plate_girder_model = BRepAlgoAPI_Fuse(plate_girder_model, weld)
+        plate_girder_model_shape = plate_girder_model.Shape()
+        return plate_girder_model_shape
