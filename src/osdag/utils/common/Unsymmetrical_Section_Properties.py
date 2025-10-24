@@ -87,7 +87,7 @@ class Unsymmetrical_I_Section_Properties:
             h_w = D - tf_top - tf_bot
             # thin-web check
             if h_w/tw > 67 * eps:
-                print("Thin web condition, using rectangular section properties", h_w/tw)
+                # print("Thin web condition, using rectangular section properties", h_w/tw)
                 A_top = bf_top * tf_top
                 A_bot = bf_bot * tf_bot
                 A = A_top + A_bot

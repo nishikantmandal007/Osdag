@@ -2372,7 +2372,7 @@ class PlateGirderWelded(Member):
         lambda_w = IS800_2007.cl_8_4_2_2_lambda_w_Simple_postcritical(self.material.fy, tau_crc)
         tau_b = IS800_2007.cl_8_4_2_2_tau_b_Simple_postcritical(lambda_w, self.material.fy)
         self.V_cr = IS800_2007.cl_8_4_2_2_Vcr_Simple_postcritical(tau_b, A_vg)
-        print("V_cr value", self.V_cr)
+        # print("V_cr value", self.V_cr)
         #self.shear_ratio =  max(self.load.shear_force / self.V_cr , self.shear_ratio)
         if self.V_cr > V:
             self.shear_ratio = max(self.load.shear_force / self.V_cr, self.shear_ratio)
