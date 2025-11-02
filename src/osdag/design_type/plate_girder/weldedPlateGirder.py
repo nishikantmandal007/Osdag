@@ -843,19 +843,24 @@ class PlateGirderWelded(Member):
             return True if self.shear_strength > self.load.shear_force  else False
 
     def section_classification(self):
-        self.web_class_list = IS800_2007.Table2_i(
+        # Correctly classify the flange based on its outstand
+        self.flange_class_list = IS800_2007.Table2_i(
             (self.section_property.flange_width - self.section_property.web_thickness) / 2,
             self.section_property.flange_thickness,
             self.material_property.fy, self.section_property.type
         )
-        self.flange_class_list = ['Plastic',0]
-        # IS800_2007.Table2_i(
-        #     self.section_property.depth_web ,
-        #     self.section_property.web_thickness,
-        #     self.material_property.fy, self.section_property.type
-        # )
+        
+        # Correctly classify the web based on its depth
+        self.web_class_list = IS800_2007.Table2_i(
+            self.section_property.depth_web,
+            self.section_property.web_thickness,
+            self.material_property.fy, self.section_property.type,
+            web_check=True
+        )
+
         self.web_class = self.web_class_list[0]
         self.flange_class = self.flange_class_list[0]
+
         if self.flange_class == "Slender" or self.web_class == "Slender":
             self.section_class_girder = "Slender"
         else:
@@ -877,8 +882,10 @@ class PlateGirderWelded(Member):
                 self.section_class_girder = "Semi-Compact"
             elif self.flange_class == "Semi-Compact" and self.web_class == "Semi-Compact":
                 self.section_class_girder = "Semi-Compact"
-        print(self.web_class_list,self.flange_class_list,self.section_class_girder)
-        return (('web_class',self.web_class),('flange_class',self.flange_class),('section_class_girder',self.section_class_girder),('Class Ratio',self.web_class_list[1]))
+        
+        print(self.web_class_list, self.flange_class_list, self.section_class_girder)
+        return (('web_class', self.web_class), ('flange_class', self.flange_class),
+                ('section_class_girder', self.section_class_girder), ('Class Ratio', self.web_class_list[1]))
 
     def Shear_Strength(self):
         self.V_d = IS800_2007.cl_8_4_design_shear_strength(
