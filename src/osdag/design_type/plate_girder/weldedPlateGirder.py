@@ -1024,6 +1024,55 @@ class PlateGirderWelded(Member):
         self.bending_strength_section_reduced = bending_strength_section
         return bending_strength_section
 
+    def design_bearing_stiffener(self):
+        """Designs the bearing stiffener as per IS 800:2007 Cl 8.7.4 and 8.7.1.
+        """
+        # Cl 8.7.4 Web Crippling
+        b1 = 0  # Stiff bearing length, assuming 0 for now as it's not defined in the user input
+        n2 = 2.5 * (self.section_property.flange_thickness + self.section_property.root_radius)
+        Fw = (b1 + n2) * self.section_property.web_thickness * self.material_property.fy / self.gamma_m1
+        self.single_section_dictionary['web_crippling_strength'] = Fw / 1000.0  # in kN
+
+        # Cl 8.7.3.1 Web Buckling
+        n1 = self.section_property.depth / 2
+        A_buckling = (b1 + n1) * self.section_property.web_thickness
+        effective_length_buckling = 0.7 * self.section_property.depth_web
+        I_buckling = (b1 + n1) * self.section_property.web_thickness ** 3 / 12
+        r_buckling = math.sqrt(I_buckling / A_buckling)
+        slenderness_buckling = effective_length_buckling / r_buckling
+        fcd_buckling = is800_2007.cl_7_1_2_1_design_compressive_stress(slenderness_buckling, self.material_property.fy, buckling_class='c')
+        F_buckling = A_buckling * fcd_buckling
+        self.single_section_dictionary['web_buckling_strength'] = F_buckling / 1000.0  # in kN
+
+        if self.load.shear_force > self.single_section_dictionary['web_crippling_strength'] or self.load.shear_force > self.single_section_dictionary['web_buckling_strength']:
+            # Design of stiffener is required
+            # Assuming a simple design for stiffener plates on both sides of the web
+            # Cl 8.7.5.2 Outstand of stiffener
+            stiffener_outstand = 14 * self.section_property.web_thickness * self.epsilon
+            self.stiffener_height = min(stiffener_outstand, 20 * self.section_property.web_thickness * self.epsilon)
+            self.stiffener_thickness = self.section_property.web_thickness  # As a starting point
+
+            # Cl 8.7.5.3 Buckling check of stiffener
+            A_stiffener = 2 * self.stiffener_height * self.stiffener_thickness + 20 * self.section_property.web_thickness**2
+            I_stiffener = (self.stiffener_thickness * (2 * self.stiffener_height + self.section_property.web_thickness)**3) / 12
+            r_stiffener = math.sqrt(I_stiffener / A_stiffener)
+            effective_length_stiffener = 0.7 * self.section_property.depth_web
+            slenderness_stiffener = effective_length_stiffener / r_stiffener
+            fcd_stiffener = is800_2007.cl_7_1_2_1_design_compressive_stress(slenderness_stiffener, self.material_property.fy, buckling_class='c')
+            stiffener_capacity = A_stiffener * fcd_stiffener
+
+            if stiffener_capacity < self.load.shear_force * 1000:
+                # Increase stiffener thickness if capacity is not sufficient
+                self.stiffener_thickness = self.stiffener_thickness * 1.2
+
+            self.single_section_dictionary['stiffener_height'] = self.stiffener_height
+            self.single_section_dictionary['stiffener_thickness'] = self.stiffener_thickness
+        else:
+            self.stiffener_height = 0
+            self.stiffener_thickness = 0
+            self.single_section_dictionary['stiffener_height'] = 0
+            self.single_section_dictionary['stiffener_thickness'] = 0
+
     def plate_girder_strength(self):
         Flexure.plate_girder_strength(self)
     def plate_girder_strength2(self):
@@ -1042,7 +1091,7 @@ class PlateGirderWelded(Member):
         check_list = []
         while var1 and (len(check_list)== 0 or all(check_list)):
             self.Shear_Strength(self)
-            ic(check_list.append( self.checks(self,4)))
+            check_list.append( self.checks(self,4))
 
             var1 = var2
             break
