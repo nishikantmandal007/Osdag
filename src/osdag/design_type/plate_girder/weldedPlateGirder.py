@@ -1572,19 +1572,67 @@ class PlateGirderWelded(Member):
 
     # Simulation starts here
     def section_classification(self,design_dictionary):
+        """
+        Classifies the plate girder section based on IS 800:2007 Table 2.
+        Additional check for minimum practical thickness is included.
+        Returns a tuple containing classification and a dictionary of thick section flags.
+        """
         self.design_status = False
-
-        #print("THICKNESS VALUES INT STIFFNER", self.int_thickness_list)
-        #print("THICKNESS VALUE LONG STIFFENER",self.long_thickness_list)
-        flange_class_top = IS800_2007.Table2_i(((self.top_flange_width / 2)),self.top_flange_thickness,self.material.fy,'Welded')[0]
-        flange_class_bottom = IS800_2007.Table2_i(((self.bottom_flange_width / 2)),self.bottom_flange_thickness,self.material.fy,'Welded')[0]
-        web_class = IS800_2007.Table2_iii((self.total_depth - self.top_flange_thickness - self.bottom_flange_thickness),self.web_thickness,self.material.fy)
+        
+        # Get classifications using modified IS800_2007 functions that include thickness checks
+        flange_top_result = IS800_2007.Table2_i(((self.top_flange_width / 2)),self.top_flange_thickness,self.material.fy,'Welded')
+        flange_class_top = flange_top_result[0]
+        is_top_flange_too_thick = flange_top_result[1] if len(flange_top_result) > 1 else False
+        
+        flange_bottom_result = IS800_2007.Table2_i(((self.bottom_flange_width / 2)),self.bottom_flange_thickness,self.material.fy,'Welded')
+        flange_class_bottom = flange_bottom_result[0]
+        is_bottom_flange_too_thick = flange_bottom_result[1] if len(flange_bottom_result) > 1 else False
+        
+        web_result = IS800_2007.Table2_iii((self.total_depth - self.top_flange_thickness - self.bottom_flange_thickness),self.web_thickness,self.material.fy)
+        web_class = web_result[0] if isinstance(web_result, tuple) else web_result
+        is_web_too_thick = web_result[1] if isinstance(web_result, tuple) and len(web_result) > 1 else False
+        
+        # Calculate ratios for reference
         web_ratio = (self.total_depth - (self.top_flange_thickness + self.bottom_flange_thickness)) / self.web_thickness
-        flange_ratio_top = self.top_flange_width / (2 *self.top_flange_thickness)
-        flange_ratio_bottom = self.bottom_flange_width / (2 *self.bottom_flange_thickness)
-        # print("Section classification- top flange, bottom flange, Web",flange_class_top, flange_class_bottom,web_class,web_ratio,flange_ratio_top,flange_ratio_bottom)
+        flange_ratio_top = self.top_flange_width / (2 * self.top_flange_thickness)
+        flange_ratio_bottom = self.bottom_flange_width / (2 * self.bottom_flange_thickness)
+        
+        # Track which sections are too thick
+        thick_sections = {
+            'top_flange': is_top_flange_too_thick,
+            'bottom_flange': is_bottom_flange_too_thick,
+            'web': is_web_too_thick
+        }
+        
+        # Store thick section info for later use
+        self.thick_sections = thick_sections
+        
+        # Only report too thick sections once per optimization cycle
+        if any(thick_sections.values()) and not hasattr(self, '_reported_thick'):
+            self._reported_thick = True
+            if thick_sections['top_flange']:
+                logger.warning("Top flange thickness exceeds practical limits (IS 800:2007)")
+            if thick_sections['bottom_flange']:
+                logger.warning("Bottom flange thickness exceeds practical limits (IS 800:2007)")
+            if thick_sections['web']:
+                logger.warning("Web thickness exceeds practical limits (IS 800:2007)")
+        
+        # Track which sections are too thick
+        thick_sections = {
+            'top_flange': is_top_flange_too_thick,
+            'bottom_flange': is_bottom_flange_too_thick,
+            'web': is_web_too_thick
+        }
+
+        # Check for overly thick sections without repeated logging
+        if flange_class_top == 'Too Thick':
+            self.design_status = False
+            self.section_class = "Too Thick"
+            return
+            
+        # Check for slender sections
         if flange_class_bottom == "Slender" or web_class == "Slender" or flange_class_top == 'Slender':
-                self.section_class = "Slender"
+            self.section_class = "Slender"
         else:
             if flange_class_top == KEY_Plastic:
                 if web_class == KEY_Plastic:
@@ -3005,17 +3053,24 @@ class PlateGirderWelded(Member):
 
     # 3. Create bounds array
     def get_bounds(self,variable_list):
+        # Calculate epsilon based on material yield strength
+        epsilon = math.sqrt(250.0/self.material.fy)
+        
+        # Calculate minimum practical thicknesses based on IS 800:2007 7.4
+        min_tf = max(8.0, 7.4 * epsilon)  # Minimum practical flange thickness
+        min_tw = max(6.0, 7.4 * epsilon)  # Minimum practical web thickness
+        
         bounds_map = {
-            'tf': (6, 100),
-            'tf_top': (6, 100),
-            'tf_bot': (6, 100),
-            'tw': (6, 40),
+            'tf': (min_tf, 40),  # Reduced upper bound to avoid impractically thick flanges
+            'tf_top': (min_tf, 40),
+            'tf_bot': (min_tf, 40),
+            'tw': (min_tw, 25),  # Reduced upper bound for web
             'bf': (100, 1000),
             'bf_top': (100, 1000),
             'bf_bot': (100, 1000),
             'D': (200, 2000),
             'c': (75, 3000),
-            't_stiff': (6, 40)
+            't_stiff': (min_tw, 25)  # Stiffener thickness similar to web
         }
         lower = [bounds_map[v][0] for v in variable_list]
         upper = [bounds_map[v][1] for v in variable_list]
@@ -3095,7 +3150,7 @@ class PlateGirderWelded(Member):
         lb = np.array(lb)
         ub = np.array(ub)
 
-        # 1) Compute normalized bounds [0…1]
+              # 1) Compute normalized bounds [0…1]
         lb_norm = np.zeros_like(lb)
         ub_norm = np.ones_like(ub)
 
@@ -3592,6 +3647,8 @@ class PlateGirderWelded(Member):
         self.final_format(self,design_dictionary)
 
     def design_check_optimized_version(self,design_dictionary):
+        """Check if the current section dimensions are valid according to design requirements."""
+        # Initialize flags
         self.design_flag = False
         self.design_flag2 = False
         self.shearflag1 = False
@@ -3601,29 +3658,48 @@ class PlateGirderWelded(Member):
         self.momentchecks = False
         self.defl_check = False
         self.long_check = False
-        self.design_flag = self.section_classification(self, design_dictionary)
-        #print('DEISGN FLAG',self.design_flag)
-        if self.design_flag == False:
-            pass
-            # logger.error("slender section not allowed")
+        
+        # Perform section classification
+        self.section_classification(self, design_dictionary)
+        
+        # If this is the first evaluation in this optimization cycle, clear the warning flag
+        if not hasattr(self, '_optimization_cycle'):
+            self._optimization_cycle = True
+            self._reported_thick = False
             
-        else:
-            self.beta_value(self, design_dictionary,self.section_class)
-
+        # Check if any section is too thick
+        if hasattr(self, 'thick_sections') and any(self.thick_sections.values()):
+            # Report too thick sections only once per optimization
+            if not self._reported_thick:
+                self._reported_thick = True
+                if self.thick_sections['top_flange']:
+                    logger.warning("Top flange thickness exceeds practical limits")
+                if self.thick_sections['bottom_flange']:
+                    logger.warning("Bottom flange thickness exceeds practical limits")
+                if self.thick_sections['web']:
+                    logger.warning("Web thickness exceeds practical limits")
+            self.design_flag = False
+            return (float('inf'), False, False)  # Return values that will fail optimization
+            
+        # Continue with regular classification
+        if hasattr(self, 'section_class'):
+            # Calculate beta value and proceed with web checks
+            self.beta_value(self, design_dictionary, self.section_class)
+            
+            # Check web requirements based on philosophy
             if self.web_philosophy == 'Thick Web without ITS':
-                # print('THICK WEB')
-                self.design_flag2 = self.min_web_thickness_thick_web(self,self.eff_depth,self.web_thickness,self.epsilon,"no_stiffener",0)
+                # Check minimum web thickness
+                self.design_flag2 = self.min_web_thickness_thick_web(self, self.eff_depth, self.web_thickness, self.epsilon, "no_stiffener", 0)
                 
-                if self.design_flag2 == True:
-                    
-                    #shear check
-                    if self.shear_capacity_laterally_supported_thick_web(self,self.material.fy,self.gamma_m0,self.total_depth,self.web_thickness,self.top_flange_thickness,self.bottom_flange_thickness):
+                if self.design_flag2:
+                    # Check shear capacity for thick web
+                    if self.shear_capacity_laterally_supported_thick_web(self, self.material.fy, self.gamma_m0, self.total_depth, self.web_thickness, self.top_flange_thickness, self.bottom_flange_thickness):
                         self.shearflag1 = True
-                        # logger.info("Shear Check passed")
-                        
                     else:
                         self.shearflag1 = False
-                        # logger.error("Shear Check failed")
+                        if not hasattr(self, '_reported_shear'):
+                            self._reported_shear = True
+                            logger.warning("Shear capacity check failed - consider increasing web thickness")
 
                     
                     #web buckling check
@@ -4008,11 +4084,32 @@ def pso(func, lb, ub, ieqcons=[], f_ieqcons=None, args=(), kwargs={},
 
     # Helper: generate a feasible position
     def random_feasible_point():
-        for _ in range(10000):
-            candidate = lb + np.random.rand(len(lb)) * (ub - lb)
-            if is_feasible(candidate):
-                return candidate
-        raise RuntimeError("Cannot find feasible initial particle!")
+            # Try a more directed approach first
+            for attempt in range(3):
+                # Start with midpoint values
+                candidate = lb + 0.5 * (ub - lb)
+                # Add some random variation but stay away from bounds
+                variation = 0.3 * (ub - lb) * (2 * np.random.rand(len(lb)) - 1)
+                candidate = np.clip(candidate + variation, lb + 0.1 * (ub - lb), ub - 0.1 * (ub - lb))
+                if is_feasible(candidate):
+                    return candidate
+            
+            # If directed approach fails, try fully random but with scaled probabilities
+            for _ in range(7000):
+                # Use beta distribution to favor middle range values
+                alpha = beta = 2.0
+                r = np.random.beta(alpha, beta, len(lb))
+                candidate = lb + r * (ub - lb)
+                if is_feasible(candidate):
+                    return candidate
+                    
+            # Last resort: try uniform random
+            for _ in range(3000):
+                candidate = lb + np.random.rand(len(lb)) * (ub - lb)
+                if is_feasible(candidate):
+                    return candidate
+                    
+            raise RuntimeError("Cannot find feasible initial particle!")
 
     # Initialize
     S, D = swarmsize, len(lb)
@@ -4022,8 +4119,16 @@ def pso(func, lb, ub, ieqcons=[], f_ieqcons=None, args=(), kwargs={},
     fp = np.full(S, np.inf)
     g = None
     fg = np.inf
-
-    # Feasible initialization
+    
+    # Try to find at least one feasible point with higher effort
+    initial_feasible = None
+    for attempt in range(50):  # More attempts for first point
+        try:
+            initial_feasible = random_feasible_point()
+            break
+        except RuntimeError:
+            if attempt == 49:  # Last attempt
+                raise  # Re-raise the original error if all attempts fail    # Feasible initialization
     for i in range(S):
         x[i, :] = random_feasible_point()
         p[i, :] = x[i, :].copy()
