@@ -4,7 +4,7 @@
 
 @Module - Plate Girder- Welded
 
-@Reference(s): 1) IS 800: 2007, General construction in steel - Code of practice (Third revision)
+@Reference(s): 1) IS 800: 2007, General construction in steel - Code
                2) IS 808: 1989, Dimensions for hot rolled steel beam, column, channel, and angle sections and
                                 it's subsequent revision(s)
                3) Design of Steel Structures by N. Subramanian (Fifth impression, 2019, Chapter 15)
@@ -860,6 +860,12 @@ class PlateGirderWelded(Member):
 
         self.web_class = self.web_class_list[0]
         self.flange_class = self.flange_class_list[0]
+
+        # Check for uneconomically thick flange
+        flange_ratio = self.flange_class_list[1]
+        epsilon = math.sqrt(250 / self.material_property.fy)
+        if flange_ratio < 7.4 * epsilon:
+            logger.warning("Flange may be uneconomically thick (b/Tf ratio is low).")
 
         if self.flange_class == "Slender" or self.web_class == "Slender":
             self.section_class_girder = "Slender"
