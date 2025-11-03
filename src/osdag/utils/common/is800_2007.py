@@ -1408,10 +1408,12 @@ class IS800_2007(object):
         """
 
         # 1) Tension‐field angle φ
-        if c == 0:
-            phi = 90.0
+        if c is None or c == 0:
+            # For end panels or when c is not specified, assume c = d as per code recommendations
+            c = d
+            phi = math.degrees(math.atan(1/1.5))  # Using c = d
         else:
-            phi = math.degrees(math.atan((d / c) / 1.5))
+            phi = math.degrees(math.atan((d / float(c)) / 1.5))
 
         # 2) Reduced plastic moment of each flange
         def Mfr(bf, tf):

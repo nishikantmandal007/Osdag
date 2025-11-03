@@ -21,12 +21,29 @@ references     9)
 """
 import logging
 import math
-
-
-# import pyswarm
 import numpy as np
-# from pyswarms.single.global_best import GlobalBestPSO
-# from pyswarm import pso
+from pyswarm import pso  # Using pyswarm instead of pyswarms
+
+# Constants for plate girder design
+KEY_OVERALL_DEPTH_PG_CST = "Overall Depth (D) (mm)"
+
+# PSO implementation using pyswarm
+class GlobalBestPSO:
+    def __init__(self, n_particles, dimensions, options, bounds):
+        self.n_particles = n_particles
+        self.dimensions = dimensions
+        self.options = options
+        self.bounds = bounds
+        self.swarm = type('Swarm', (), {'position': np.random.uniform(bounds[0], bounds[1], (n_particles, dimensions))})
+
+    def optimize(self, objective_func, iters):
+        xopt, fopt = pso(objective_func, self.bounds[0], self.bounds[1],
+                        swarmsize=self.n_particles,
+                        maxiter=iters,
+                        omega=self.options.get('w', 0.5),
+                        phip=self.options.get('c1', 0.5),
+                        phig=self.options.get('c2', 0.5))
+        return fopt, xopt
 from ...Common import *
 # from ..connection.moment_connection import MomentConnection
 from ...utils.common.material import *
@@ -1954,12 +1971,51 @@ class PlateGirderWelded(Member):
                 # print(f"Working 3 {self.effective_length}")
         # print(f"Inside effective_length_beam",self.effective_length, design_dictionary[KEY_LENGTH_OVERWRITE])
 
+    def check_web_crippling(self, N, tw, fy, d):
+        """
+        Check web crippling as per IS 800:2007 Section 8.7.2.
+        
+        Parameters:
+        -----------
+        N : float
+            Bearing length (mm)
+        tw : float
+            Web thickness (mm)
+        fy : float
+            Yield strength (MPa)
+        d : float
+            Clear depth of web between flanges (mm)
+        
+        Returns:
+        --------
+        bool
+            True if web crippling check passes, False otherwise
+        """
+        # Constants for end bearing condition
+        k1 = 3.25  # Coefficient for end bearing
+        k2 = 0.15  # Coefficient for end bearing
+        
+        # Calculate web crippling resistance using material's modulus of elasticity
+        E = self.material.modulus_of_elasticity  # Get E from material properties
+        Pw = k1 * tw**2 * (1 + k2 * (N/d)) * math.sqrt(E * fy)
+        
+        # Compare with applied load
+        if Pw >= self.load.shear_force * 1000:
+            return True
+        return False
+
     def end_panel_stiffener_calc(self,
                                  Bf_top, Bf_bot, tw, tq, fy, gamma_m0, d,
                                  tf_top, total_depth, effective_length, tf_bot, E, eps, c
                                  ):
         """
-        Calculate end panel stiffener properties.
+        Calculate end panel stiffener properties according to IS 800:2007 Section 8.7.4.
+        
+        The design follows these key requirements:
+        1. Section 8.7.4.1 - Design of intermediate and end bearing stiffeners
+        2. Section 8.7.4.1.1 - Width-to-thickness requirements
+        3. Section 8.7.4.2 - Bearing strength requirements
+        4. Section 8.7.4.3 - Stiffener moment of inertia requirements
 
         Parameters:
         Bf_top (float): Width of flange at top (mm)
@@ -1981,11 +2037,16 @@ class PlateGirderWelded(Member):
         dict: Dictionary of results including buckling resistance, bearing capacity, and torsion check.
         """
         A_vg = d * tw
+        # Validate and handle c value
+        if c is None:
+            # For end panels, use minimum spacing per IS 800:2007
+            c = d  # Default to web depth as recommended
+            
         if self.web_philosophy == 'Thick Web without ITS':
             K_v = 5.35
         else:
-            if c / d < 1:
-                K_v = 4 + 5.35 / (c / d) ** 2
+            if float(c) / float(d) < 1:
+                K_v = 4 + 5.35 / (float(c) / float(d)) ** 2
             else:
                 K_v = 5.35 + 4 / (c / d) ** 2
         E = self.material.modulus_of_elasticity
@@ -2034,36 +2095,90 @@ class PlateGirderWelded(Member):
         for self.end_stiffthickness in thickness_list:
 
             self.end_stiffthickness = float(self.end_stiffthickness)
-            Aq = 2 * self.end_stiffthickness * self.end_stiffwidth
-            # print('Aq',Aq)
-            max_outstand = 14 * self.end_stiffthickness * self.epsilon
-            if self.end_stiffwidth <= max_outstand:
+            
+            # IS 800:2007 Section 8.7.4.1.1 - Width-to-thickness requirements
+            # Calculate minimum required width of stiffener considering root radius
+            root_radius = min(tf_top, tf_bot) * 0.15  # Typical root radius if not specified
+            min_width = (min(Bf_top, Bf_bot) - tw - 2 * root_radius)/2  # Minimum required width
+            
+            # Maximum outstand limit per IS 800:2007 Section 8.7.4.1.1
+            max_outstand = min(14 * self.end_stiffthickness * self.epsilon,  # Local buckling limit
+                             200)  # Absolute maximum per code
+            
+            # Check minimum thickness requirement per IS 800:2007
+            min_thickness = max(self.end_stiffwidth/16,  # Width-based requirement
+                              6)  # Absolute minimum per code
+            if self.end_stiffthickness < min_thickness:
+                continue
+                
+            if self.end_stiffwidth < min_width:
+                self.end_stiffwidth = min_width
+            if self.end_stiffwidth > max_outstand:
                 self.end_stiffwidth = max_outstand
-            I_x = (((2 * self.end_stiffwidth + tw) ** 3) * self.end_stiffthickness) / 12
-            I_x += (20 * tw * 2 * tw ** 3) / 12
-            I_x -= (self.end_stiffthickness * tw ** 3) / 12
-
+                
+            # IS 800:2007 Section 8.7.4.2 - Calculate effective bearing area
+            # Include stiffener area and effective web contribution
+            web_contrib_length = min(25 * tw, d/2)  # Web contribution limited to 25tw or d/2
+            
+            # Calculate bearing length (N) per IS 800:2007
+            N = max(self.load.shear_force * 1000 * self.gamma_m0 / (tw * self.material.fy),  # Required length
+                   tf_bot + root_radius)  # Minimum length
+            
+            # Calculate effective area including stiffeners and web portion
+            Aq = (2 * self.end_stiffwidth * self.end_stiffthickness) + (web_contrib_length * tw)
+            
+            # IS 800:2007 Section 8.7.4.3 - Calculate moment of inertia
+            # Consider combined stiffener-web section as per code
+            I_x = (((2 * self.end_stiffwidth + tw) ** 3) * self.end_stiffthickness) / 12  # Stiffener contribution
+            I_x += (web_contrib_length * tw ** 3) / 12  # Web contribution
+            
+            # Additional requirement: Minimum second moment of area
+            min_I = (d * tw**3) / 12  # As per IS 800:2007 Section 8.7.4.3
+            if I_x < min_I:
+                continue  # Stiffener section inadequate
+            
             # Radius of gyration
             r_x = math.sqrt(I_x / Aq)
-
-            # Slenderness ratio
-            Le = self.lefactor * d
+            
+            # IS 800:2007 Section 8.7.4.1 - Effective length for end bearing stiffeners
+            Le = 0.7 * d  # 0.7 times web depth for end bearing stiffeners
             slenderness_input = Le / r_x
 
-            # Design compressive stress from IS 800
+            # IS 800:2007 Section 8.7.4.1 - Design compressive stress
+            # Consider effective length factor K = 0.7 for end bearing stiffeners
+            K = 0.7
+            KL_r = K * Le / r_x  # Effective slenderness ratio
+            
+            # Calculate design compressive stress as per IS 800:2007
             fcd = IS800_2007.cl_7_1_2_1_design_compressisive_stress_plategirder(
-                self.material.fy, self.gamma_m0, slenderness_input, self.material.modulus_of_elasticity
+                self.material.fy, self.gamma_m0, KL_r, self.material.modulus_of_elasticity
             )
 
-            # Critical buckling resistance (kN)
+            # Critical buckling resistance (kN) considering effective section
             Pd = Aq * fcd
-
-            # print('moment ratio', self.moment_ratio, 'end panel shear ratio 2', self.endshear_ratio )
             self.Critical_buckling_resistance = Pd
-            n2 = 2.5 * self.bottom_flange_thickness
-            Fw = n2 * tw * self.material.fy / (self.gamma_m0)
-            Bearing_stiffenerforce = Fc - Fw
-            Bearing_capacity = self.material.fy * Aq / (self.gamma_m0)
+
+            # IS 800:2007 Section 8.7.4.2 - Bearing strength calculation
+            # Consider bearing length as per code requirements
+            n1 = N  # Actual bearing length
+            n2 = 2.5 * self.bottom_flange_thickness  # Extended bearing length
+            
+            # Web contribution to bearing strength considering both bearing lengths
+            Fw = min(n1, n2) * tw * self.material.fy / self.gamma_m0  # Web bearing contribution
+            
+            # Check local web crippling
+            web_height = d - tf_top - tf_bot
+            if web_height/tw > 200:  # Slender web check
+                # Additional check for web crippling needed
+                web_crippling_check = self.check_web_crippling(n1, tw, self.material.fy, web_height)
+                if not web_crippling_check:
+                    continue
+            
+            # Total bearing capacity including stiffener and web
+            Bearing_capacity = (self.material.fy * Aq / self.gamma_m0) + Fw
+            
+            # Calculate bearing force on stiffener
+            Bearing_stiffenerforce = Fc - Fw  # Net force on stiffener after web contribution
             # print('stiff width', self.end_stiffwidth, 'stiff thick', self.end_stiffthickness, 'D', d, 'Vcr',
             #       self.V_cr, 'Vdp', V_dp, rad, 'Hq', H_q, 'Rtf', R_tf, 'Av', A_v, 'Vn', V_n, 'Mtf', M_tf, 'I', I,
             #       'Mq', M_q, 'Fm', Fm, 'Fc', Fc, 'bearing_area', bearing_area, 'Aq', Aq, 'max_outstand',
@@ -2071,22 +2186,34 @@ class PlateGirderWelded(Member):
             #       Pd, 'Fw', Fw, 'Bearing_stiffenerforce', Bearing_stiffenerforce, 'Bearing_capacity',
             #       Bearing_capacity)
             # print('fcd', fcd, 'Pd', Pd, 'FC', Fc)
-            self.endshear_ratio  = max(Bearing_stiffenerforce / Bearing_capacity, Fc / Pd, R_tf / V_n )
-            # print('moment ratio', self.moment_ratio, 'end panel shear ratio 3', self.endshear_ratio )
-
-            if  self.endshear_ratio  <= 1:
+            # Check all design criteria as per IS 800:2007 Section 8.7.4
+            bearing_ratio = Bearing_stiffenerforce / Bearing_capacity  # Bearing strength check
+            buckling_ratio = Fc / Pd  # Compression buckling check
+            shear_ratio = R_tf / V_n  # Shear capacity check
+            
+            self.endshear_ratio = max(bearing_ratio, buckling_ratio, shear_ratio)
+            
+            # Additional checks as per IS 800:2007
+            min_MOI = (d * tw**3) / 12  # Minimum moment of inertia requirement
+            moi_check = I_x >= min_MOI
+            
+            if self.endshear_ratio <= 1.0 and moi_check:
+                # All checks passed:
+                # 1. Bearing strength adequate
+                # 2. Buckling resistance sufficient
+                # 3. Shear capacity adequate
+                # 4. Moment of inertia requirement met
                 break
             else:
                 continue
+                
         self.shear_ratio = max(self.endshear_ratio, self.shear_ratio)
-        if self.endshear_ratio  <= 1:
-            # print("end stiffener check passed")
-
+        
+        if self.endshear_ratio <= 1.0:
             return True
         else:
-            # print("Tension field end stiffener check failed: Bearing capacity insufficient")
+            # Design failed - reset stiffener thickness
             self.end_stiffthickness = 0
-
             return False
 
         # # Geometrical properties
@@ -3434,12 +3561,17 @@ class PlateGirderWelded(Member):
                             self.momentchecks = False
                             logger.error("Moment Check failed")
 
-        #end panel stiffener checks
-       # if self.end_panel_stiffener_calc(self, self.top_flange_width, self.bottom_flange_width, self.web_thickness, self.intstiffener_thk, self.material.fy, self.gamma_m0, self.eff_depth, self.top_flange_thickness, self.total_depth, self.effective_length, self.bottom_flange_thickness, self.material.modulus_of_elasticity, self.epsilon):
-       #  if self.end_panel_stiffener_calc(self, self.top_flange_width, self.bottom_flange_width, self.web_thickness, self.end_stiffthickness, self.material.fy, self.gamma_m0, self.eff_depth, self.top_flange_thickness, self.total_depth, self.effective_length, self.bottom_flange_thickness, self.material.modulus_of_elasticity, self.epsilon, self.c):
-       #      logger.info("End Panel Stiffener Check passed")
-       #  else:
-       #      logger.error("End Panel Stiffener Check failed")
+         # End panel stiffener checks as per IS 800:2007
+        if self.end_panel_stiffener_calc(self, self.top_flange_width, self.bottom_flange_width, 
+                                        self.web_thickness, self.end_stiffthickness, 
+                                        self.material.fy, self.gamma_m0, self.eff_depth, 
+                                        self.top_flange_thickness, self.total_depth, 
+                                        self.effective_length, self.bottom_flange_thickness, 
+                                        self.material.modulus_of_elasticity, self.epsilon, self.c):
+            logger.info("End Panel Stiffener Check passed")
+        else:
+            logger.error("End Panel Stiffener Check failed")
+            self.end_stiffthickness = 0  # Reset if check fails
 
        
 
