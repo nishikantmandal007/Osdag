@@ -350,6 +350,7 @@ class PlateGirderWelded(Member):
     def __init__(self):
         super(PlateGirderWelded, self).__init__()
         self.design_status = False
+        self.flange_warning_logged = False  # Flag to log b/tf warnings only once per session
         
         
 
@@ -2057,11 +2058,47 @@ class PlateGirderWelded(Member):
         tau_b = IS800_2007.cl_8_4_2_2_tau_b_Simple_postcritical(lambda_w, fy)
         self.V_cr = IS800_2007.cl_8_4_2_2_Vcr_Simple_postcritical(tau_b, A_vg)
         Nf = self.load.moment / d
-        phi, M_fr_t, M_fr_b, s_t, s_b, w_tf, sai, fv, self.V_tf = IS800_2007.cl_8_4_2_2_TensionField_unequal_Isection(c, d, tw,
-                                                                            fy, Bf_top,
-                                                                            tf_top, Bf_bot, tf_bot,
-                                                                            Nf, gamma_m0,
-                                                                            A_vg, tau_b)
+        # 1) Tension‐field angle φ
+        if c is None or c == 0:
+            # For end panels or when c is not specified, assume c = d as per code recommendations
+            c = d
+            phi = math.degrees(math.atan(1/1.5))  # Using c = d
+        else:
+            phi = math.degrees(math.atan((d / float(c)) / 1.5))
+
+        # 2) Reduced plastic moment of each flange
+        ratio_t = Nf / (Bf_top * tf_top * fy / gamma_m0)
+        if ratio_t >= 1:
+            M_fr_t = 0
+        else:
+            M_fr_t = 0.25 * Bf_top * tf_top**2 * fy * (1 - ratio_t**2)
+        
+        ratio_b = Nf / (Bf_bot * tf_bot * fy / gamma_m0)
+        if ratio_b >= 1:
+            M_fr_b = 0
+        else:
+            M_fr_b = 0.25 * Bf_bot * tf_bot**2 * fy * (1 - ratio_b**2)
+
+        # 3) s‐values for each flange, limited to c
+        sinφ = math.sin(math.radians(phi))
+        if sinφ == 0:
+            s_t = 0
+            s_b = 0
+        else:
+            s_t = min(2 * math.sqrt(M_fr_t / (fy * tw)) / sinφ, c)
+            s_b = min(2 * math.sqrt(M_fr_b / (fy * tw)) / sinφ, c)
+
+        # 4) Width of the tension field w_tf
+        w_tf = d * math.cos(math.radians(phi)) - (c - s_t - s_b) * sinφ
+
+        # 5) Field yield strength f_v
+        sai = 1.5 * tau_b * math.sin(2 * math.radians(phi))
+        fv = math.sqrt(fy**2 - 3 * tau_b**2 + sai**2) - sai
+
+        # 6) Nominal shear resistance V_tf (kN)
+        self.V_tf = (A_vg * tau_b + 0.9 * w_tf * tw * fv * sinφ)
+        V_p = d * tw * fy / (math.sqrt(3) * gamma_m0)  # Plastic shear strength
+        self.V_tf = min(self.V_tf, V_p)
         V_dp = (d * tw * fy / math.sqrt(3))
 
         rad = 1.0 - (self.V_cr / V_dp)
@@ -3397,6 +3434,22 @@ class PlateGirderWelded(Member):
             logger.error("slender section not allowed")
             
         else:
+            # Ensure flange warning flag is initialized
+            if not hasattr(self, 'flange_warning_logged'):
+                self.flange_warning_logged = False
+            
+            # Check minimum b/tf ratio for flanges to prevent overly thick flanges
+            min_b_tf = 7.4 * self.epsilon
+            b_tf_top = self.top_flange_width / self.top_flange_thickness
+            if b_tf_top < min_b_tf and not self.flange_warning_logged:
+                logger.warning(f"Top flange b/tf ratio ({b_tf_top:.2f}) is less than minimum ({min_b_tf:.2f}), flanges may be too thick")
+                self.flange_warning_logged = True
+            
+            b_tf_bot = self.bottom_flange_width / self.bottom_flange_thickness
+            if b_tf_bot < min_b_tf and not self.flange_warning_logged:
+                logger.warning(f"Bottom flange b/tf ratio ({b_tf_bot:.2f}) is less than minimum ({min_b_tf:.2f}), flanges may be too thick")
+                self.flange_warning_logged = True
+            
             self.beta_value(self, design_dictionary,self.section_class)
 
             if self.web_philosophy == 'Thick Web without ITS':
@@ -3608,6 +3661,22 @@ class PlateGirderWelded(Member):
             # logger.error("slender section not allowed")
             
         else:
+            # Ensure flange warning flag is initialized
+            if not hasattr(self, 'flange_warning_logged'):
+                self.flange_warning_logged = False
+            
+            # Check minimum b/tf ratio for flanges to prevent overly thick flanges
+            min_b_tf = 7.4 * self.epsilon
+            b_tf_top = self.top_flange_width / self.top_flange_thickness
+            if b_tf_top < min_b_tf and not self.flange_warning_logged:
+                logger.warning(f"Top flange b/tf ratio ({b_tf_top:.2f}) is less than minimum ({min_b_tf:.2f}), flanges may be too thick")
+                self.flange_warning_logged = True
+            
+            b_tf_bot = self.bottom_flange_width / self.bottom_flange_thickness
+            if b_tf_bot < min_b_tf and not self.flange_warning_logged:
+                logger.warning(f"Bottom flange b/tf ratio ({b_tf_bot:.2f}) is less than minimum ({min_b_tf:.2f}), flanges may be too thick")
+                self.flange_warning_logged = True
+            
             self.beta_value(self, design_dictionary,self.section_class)
 
             if self.web_philosophy == 'Thick Web without ITS':
