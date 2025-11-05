@@ -192,11 +192,8 @@ class IS800_2007(object):
         
         ratio = width / thickness
 
-        # First check for minimum thickness (to avoid impractically thick sections)
         if section_type == 'Rolled':
-            if ratio < (8.4 * epsilon):  # Minimum practical limit for rolled sections
-                section_class = 'Too Thick'
-            elif ratio <= (9.4 * epsilon):
+            if ratio <= (9.4 * epsilon):
                 section_class = 'Plastic'
             elif ratio <= (10.5 * epsilon):
                 section_class = 'Compact'
@@ -204,10 +201,8 @@ class IS800_2007(object):
                 section_class = 'Semi-Compact'
             else:
                 section_class = 'Slender'
-        else:  # Welded sections
-            if ratio < (7.4 * epsilon):  # Minimum practical limit for welded sections
-                section_class = 'Too Thick'
-            elif ratio <= (8.4 * epsilon):
+        else:
+            if ratio <= (8.4 * epsilon):
                 section_class = 'Plastic'
             elif ratio <= (9.4 * epsilon):
                 section_class = 'Compact'
@@ -215,9 +210,6 @@ class IS800_2007(object):
                 section_class = 'Semi-Compact'
             else:
                 section_class = 'Slender'
-        
-        # Return both classification and ratio for better control
-        return [section_class, ratio]
         '''
         print(f" flange_class"
                     f" width {width}"
