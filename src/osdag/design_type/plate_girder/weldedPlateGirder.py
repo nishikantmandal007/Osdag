@@ -346,11 +346,18 @@ class PopupDialog(QDialog):
 class PlateGirderWelded(Member):
     int_thicklist = []
     long_thicklist = []
+    # Class-level warning flags for optimization methods
+    _flange_warning_logged = False
+    _dimension_warning_logged = False
+    _web_crippling_warning_logged = False
 
     def __init__(self):
         super(PlateGirderWelded, self).__init__()
         self.design_status = False
+        # Instance-level warning flags
         self.flange_warning_logged = False  # Flag to log b/tf warnings only once per session
+        self.dimension_warning_logged = False  # Flag to log dimension warnings only once per session
+        self.web_crippling_warning_logged = False  # Flag to log web crippling warnings only once per session
         
         
 
@@ -1411,7 +1418,7 @@ class PlateGirderWelded(Member):
         self.loading_case = design_dictionary[KEY_BENDING_MOMENT_SHAPE]
         self.beta_b_lt = None
         self.web_philosophy = design_dictionary[KEY_WEB_PHILOSOPHY]
-        self.epsilon = math.sqrt(250 / self.material.fy)
+        self.epsilon = math.sqrt(250 / (self.material.fy / 1e6))
         self.b1 = float(design_dictionary[KEY_SUPPORT_WIDTH])
         self.c = design_dictionary[KEY_IntermediateStiffener_spacing]
         self.Is = None
@@ -1718,14 +1725,19 @@ class PlateGirderWelded(Member):
     
     #check 5 Web crippling for major laterally supported and unsupported & thick web
     def web_crippling_laterally_supported_thick_web(self, Fy, gamma_m0, tw, tf_top, b1):
-        n2 = 2.5 * tf_top
-        Critical_crippling_load = round((b1 + n2) * tw * Fy / (gamma_m0), 2)
-        # print("Critical crippling load", Critical_crippling_load)
-        self.web_crippling_ratio = self.load.shear_force / Critical_crippling_load
-        self.shear_ratio =  max(self.load.shear_force / Critical_crippling_load , self.shear_ratio)
-        if Critical_crippling_load >= self.load.shear_force:
-            return True
-        else:
+        try:
+            web_height = self.total_depth - self.top_flange_thickness - self.bottom_flange_thickness
+            # Use the IS 800:2007 compliant check_web_crippling method
+            return self.check_web_crippling(b1, tw, Fy, web_height)
+        except Exception as e:
+            if isinstance(self, PlateGirderWelded):
+                if not self.web_crippling_warning_logged:
+                    logger.error(f"Error in web crippling check during optimization: {str(e)}")
+                    self.web_crippling_warning_logged = True
+            else:
+                if not PlateGirderWelded._web_crippling_warning_logged:
+                    logger.error(f"Error in web crippling check during optimization: {str(e)}")
+                    PlateGirderWelded._web_crippling_warning_logged = True
             return False
 
 
@@ -1992,11 +2004,73 @@ class PlateGirderWelded(Member):
         bool
             True if web crippling check passes, False otherwise
         """
-        # Constants for end bearing condition
-        k1 = 3.25  # Coefficient for end bearing
-        k2 = 0.15  # Coefficient for end bearing
-        
-        # Calculate web crippling resistance using material's modulus of elasticity
+        try:
+            # Input validation with IS code specific checks
+            if any(val <= 0 for val in [N, tw, fy, d]):
+                # Handle both class and instance method calls
+                if isinstance(self, PlateGirderWelded):
+                    if not self.web_crippling_warning_logged:
+                        logger.warning("Invalid input parameters for web crippling check")
+                        self.web_crippling_warning_logged = True
+                else:
+                    if not PlateGirderWelded._web_crippling_warning_logged:
+                        logger.warning("Invalid input parameters for web crippling check")
+                        PlateGirderWelded._web_crippling_warning_logged = True
+                return False
+
+            # As per IS 800:2007 Section 8.7.2
+            # Constants for end bearing condition
+            k1 = 3.25  # For end reactions (Clause 8.7.2.1)
+            k2 = 0.15  # For end reactions (Clause 8.7.2.1)
+            
+            # Modulus of elasticity (E) as per IS 800:2007
+            E = self.material.E  # Should be 2e5 MPa for steel
+            
+            # Calculate web crippling resistance as per IS 800:2007 Clause 8.7.2.1
+            # P_w = (k1 * k2 * tw^2 * sqrt(fy * E)) * (1 + (N/d))
+            # where N = bearing length, d = clear depth of web
+            P_w = (k1 * k2 * tw * tw * math.sqrt(fy * E)) * (1 + (N/d))
+            
+            # Apply partial safety factor (γm1) as per IS 800:2007 Table 5 (Clause 5.4.1)
+            # γm1 = 1.10 for ultimate limit state
+            P_w = P_w / self.gamma_m1  
+
+            # Additional checks as per IS 800:2007
+            if d/tw > 200:  # Slender web condition
+                # Handle both class and instance method calls
+                if isinstance(self, PlateGirderWelded):
+                    if not self.web_crippling_warning_logged:
+                        logger.warning("Web slenderness ratio (d/tw) exceeds 200. Additional stiffening may be required.")
+                        self.web_crippling_warning_logged = True
+                else:
+                    if not PlateGirderWelded._web_crippling_warning_logged:
+                        logger.warning("Web slenderness ratio (d/tw) exceeds 200. Additional stiffening may be required.")
+                        PlateGirderWelded._web_crippling_warning_logged = True
+            
+            # Compare with factored load as per IS 800:2007
+            if P_w >= self.load.shear_force:
+                return True
+            else:
+                if isinstance(self, PlateGirderWelded):
+                    if not self.web_crippling_warning_logged:
+                        logger.warning(f"Web crippling resistance ({P_w:.2f} N) is less than factored load ({self.load.shear_force:.2f} N)")
+                        self.web_crippling_warning_logged = True
+                else:
+                    if not PlateGirderWelded._web_crippling_warning_logged:
+                        logger.warning(f"Web crippling resistance ({P_w:.2f} N) is less than factored load ({self.load.shear_force:.2f} N)")
+                        PlateGirderWelded._web_crippling_warning_logged = True
+                return False
+                
+        except Exception as e:
+            if isinstance(self, PlateGirderWelded):
+                if not self.web_crippling_warning_logged:
+                    logger.error(f"Error in web crippling calculation: {str(e)}")
+                    self.web_crippling_warning_logged = True
+            else:
+                if not PlateGirderWelded._web_crippling_warning_logged:
+                    logger.error(f"Error in web crippling calculation: {str(e)}")
+                    PlateGirderWelded._web_crippling_warning_logged = True
+            return False
         E = self.material.modulus_of_elasticity  # Get E from material properties
         Pw = k1 * tw**2 * (1 + k2 * (N/d)) * math.sqrt(E * fy)
         
@@ -2203,15 +2277,37 @@ class PlateGirderWelded(Member):
             # Web contribution to bearing strength considering both bearing lengths
             Fw = min(n1, n2) * tw * self.material.fy / self.gamma_m0  # Web bearing contribution
             
-            # Check local web crippling
-            web_height = d - tf_top - tf_bot
-            if web_height/tw > 200:  # Slender web check
-                # Additional check for web crippling needed
-                web_crippling_check = self.check_web_crippling(n1, tw, self.material.fy, web_height)
-                if not web_crippling_check:
+            # Check local web crippling as per IS 800:2007
+            web_height = d - tf_top - tf_bot  # Clear depth of web between flanges
+            
+            # Web slenderness check as per IS 800:2007
+            if web_height/tw > 200:  # Slender web condition requiring additional checks
+                try:
+                    # Additional check for web crippling needed as per IS 800:2007 Section 8.7.2
+                    web_crippling_check = self.check_web_crippling(n1, tw, self.material.fy, web_height)
+                    if not web_crippling_check:
+                        # Handle both class and instance method calls
+                        if isinstance(self, PlateGirderWelded):
+                            if not self.web_crippling_warning_logged:
+                                logger.warning("Web crippling check failed as per IS 800:2007. Consider increasing web thickness or adding stiffeners.")
+                                self.web_crippling_warning_logged = True
+                        else:
+                            if not PlateGirderWelded._web_crippling_warning_logged:
+                                logger.warning("Web crippling check failed as per IS 800:2007. Consider increasing web thickness or adding stiffeners.")
+                                PlateGirderWelded._web_crippling_warning_logged = True
+                        continue
+                except Exception as e:
+                    if isinstance(self, PlateGirderWelded):
+                        if not self.web_crippling_warning_logged:
+                            logger.error(f"Error during web crippling check: {str(e)}")
+                            self.web_crippling_warning_logged = True
+                    else:
+                        if not PlateGirderWelded._web_crippling_warning_logged:
+                            logger.error(f"Error during web crippling check: {str(e)}")
+                            PlateGirderWelded._web_crippling_warning_logged = True
                     continue
             
-            # Total bearing capacity including stiffener and web
+            # Total bearing capacity including stiffener and web as per IS 800:2007
             Bearing_capacity = (self.material.fy * Aq / self.gamma_m0) + Fw
             
             # Calculate bearing force on stiffener
@@ -3126,6 +3222,11 @@ class PlateGirderWelded(Member):
     
     def optimized_method(self, design_dictionary, is_thick_web, is_symmetric):
 
+        # Reset warning flags at the start of optimization run
+        self.flange_warning_logged = False
+        self.dimension_warning_logged = False
+        self.web_crippling_warning_logged = False
+        PlateGirderWelded._web_crippling_warning_logged = False  # Reset class-level flag as well
 
         variable_list = self.build_variable_structure(self,is_thick_web, is_symmetric)
         lb, ub = self.get_bounds(self,variable_list)
@@ -3437,6 +3538,8 @@ class PlateGirderWelded(Member):
             # Ensure flange warning flag is initialized
             if not hasattr(self, 'flange_warning_logged'):
                 self.flange_warning_logged = False
+            if not hasattr(self, 'dimension_warning_logged'):
+                self.dimension_warning_logged = False
             
             # Check minimum b/tf ratio for flanges to prevent overly thick flanges
             min_b_tf = 7.4 * self.epsilon
@@ -3449,6 +3552,15 @@ class PlateGirderWelded(Member):
             if b_tf_bot < min_b_tf and not self.flange_warning_logged:
                 logger.warning(f"Bottom flange b/tf ratio ({b_tf_bot:.2f}) is less than minimum ({min_b_tf:.2f}), flanges may be too thick")
                 self.flange_warning_logged = True
+            
+            # Check that bottom flange dimensions are not less than top flange dimensions
+            if self.bottom_flange_width < self.top_flange_width and not self.dimension_warning_logged:
+                logger.warning(f"Bottom flange width ({self.bottom_flange_width:.2f} mm) is less than top flange width ({self.top_flange_width:.2f} mm)")
+                self.dimension_warning_logged = True
+            
+            if self.bottom_flange_thickness < self.top_flange_thickness and not self.dimension_warning_logged:
+                logger.warning(f"Bottom flange thickness ({self.bottom_flange_thickness:.2f} mm) is less than top flange thickness ({self.top_flange_thickness:.2f} mm)")
+                self.dimension_warning_logged = True
             
             self.beta_value(self, design_dictionary,self.section_class)
 
@@ -3644,6 +3756,10 @@ class PlateGirderWelded(Member):
             pass
         self.final_format(self,design_dictionary)
 
+        # Reset warning flags after design completion for next run
+        self.flange_warning_logged = False
+        self.dimension_warning_logged = False
+
     def design_check_optimized_version(self,design_dictionary):
         self.design_flag = False
         self.design_flag2 = False
@@ -3664,6 +3780,8 @@ class PlateGirderWelded(Member):
             # Ensure flange warning flag is initialized
             if not hasattr(self, 'flange_warning_logged'):
                 self.flange_warning_logged = False
+            if not hasattr(self, 'dimension_warning_logged'):
+                self.dimension_warning_logged = False
             
             # Check minimum b/tf ratio for flanges to prevent overly thick flanges
             min_b_tf = 7.4 * self.epsilon
@@ -3676,6 +3794,15 @@ class PlateGirderWelded(Member):
             if b_tf_bot < min_b_tf and not self.flange_warning_logged:
                 logger.warning(f"Bottom flange b/tf ratio ({b_tf_bot:.2f}) is less than minimum ({min_b_tf:.2f}), flanges may be too thick")
                 self.flange_warning_logged = True
+            
+            # Check that bottom flange dimensions are not less than top flange dimensions
+            if self.bottom_flange_width < self.top_flange_width and not self.dimension_warning_logged:
+                logger.warning(f"Bottom flange width ({self.bottom_flange_width:.2f} mm) is less than top flange width ({self.top_flange_width:.2f} mm)")
+                self.dimension_warning_logged = True
+            
+            if self.bottom_flange_thickness < self.top_flange_thickness and not self.dimension_warning_logged:
+                logger.warning(f"Bottom flange thickness ({self.bottom_flange_thickness:.2f} mm) is less than top flange thickness ({self.top_flange_thickness:.2f} mm)")
+                self.dimension_warning_logged = True
             
             self.beta_value(self, design_dictionary,self.section_class)
 
@@ -3704,8 +3831,9 @@ class PlateGirderWelded(Member):
                         # logger.error("Web Buckling Check failed")
                     
                     #web crippling check
-                    if self.web_crippling_laterally_supported_thick_web(self,self.material.fy,self.gamma_m0,self.web_thickness,self.top_flange_thickness,self.b1):
-                        self.shearflag3 = False
+                    web_height = self.total_depth - self.top_flange_thickness - self.bottom_flange_thickness
+                    if self.check_web_crippling(self.b1, self.web_thickness, self.material.fy, web_height):
+                        self.shearflag3 = True  # Fixed from False to True
                         # logger.info("Web Crippling Check passed")
                     else:
                         self.shearflag3 = False
