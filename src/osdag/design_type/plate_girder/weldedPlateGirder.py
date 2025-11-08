@@ -2024,16 +2024,16 @@ class PlateGirderWelded(Member):
             k2 = 0.15  # For end reactions (Clause 8.7.2.1)
             
             # Modulus of elasticity (E) as per IS 800:2007
-            E = self.material.E  # Should be 2e5 MPa for steel
+            E = self.material.modulus_of_elasticity  # Should be 2e5 MPa for steel
             
             # Calculate web crippling resistance as per IS 800:2007 Clause 8.7.2.1
             # P_w = (k1 * k2 * tw^2 * sqrt(fy * E)) * (1 + (N/d))
             # where N = bearing length, d = clear depth of web
             P_w = (k1 * k2 * tw * tw * math.sqrt(fy * E)) * (1 + (N/d))
             
-            # Apply partial safety factor (γm1) as per IS 800:2007 Table 5 (Clause 5.4.1)
-            # γm1 = 1.10 for ultimate limit state
-            P_w = P_w / self.gamma_m1  
+            # Apply partial safety factor (γm0) as per IS 800:2007 Table 5 (Clause 5.4.1)
+            # For strength, γm0 = 1.10 is used as per IS 800:2007
+            P_w = P_w / self.gamma_m0  
 
             # Additional checks as per IS 800:2007
             if d/tw > 200:  # Slender web condition
@@ -3832,7 +3832,7 @@ class PlateGirderWelded(Member):
                     
                     #web crippling check
                     web_height = self.total_depth - self.top_flange_thickness - self.bottom_flange_thickness
-                    if self.check_web_crippling(self.b1, self.web_thickness, self.material.fy, web_height):
+                    if self.check_web_crippling(self, self.b1, self.web_thickness, self.material.fy, web_height):
                         self.shearflag3 = True  # Fixed from False to True
                         # logger.info("Web Crippling Check passed")
                     else:
