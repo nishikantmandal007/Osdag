@@ -47,8 +47,8 @@ class FilletWeld(object):
 
     def place(self, sec_origin, uDir, wDir):
         self.sec_origin = sec_origin
-        self.uDir = uDir
-        self.wDir = wDir
+        self.uDir = numpy.array(uDir)
+        self.wDir = numpy.array(wDir)
         self.compute_params()
 
     def compute_params(self):
