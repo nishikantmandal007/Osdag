@@ -1,15 +1,3 @@
-"""
-================================================================================
-pyswarm: Particl swarm optimization (PSO) with constraint support
-================================================================================
-
-Author: Abraham Lee
-Copyright: 2013-2014
-
-"""
-# from __future__ import absolute_import
-
-__author__ = 'Abraham Lee'
-__version__ = '0.6'
-
-from .pso import *
+# This file can be left empty.
+# Its presence tells Python that this directory
+# (osdag/design_type/plate_girder) is a package.
