@@ -3,6 +3,7 @@ Output dock widget for Osdag GUI.
 Displays output fields and report generation for connection design.
 """
 import sys
+from importlib import resources
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QSizePolicy, QGroupBox,
@@ -765,10 +766,9 @@ class OutputDock(QWidget):
             json.dump(data, tmp)
             tmp.close()
 
-            exporter_script = os.path.join(
-                os.path.dirname(__file__), '..', '..', '..', '..', 'osdag_core', 'export_ifc', 'subprocess_ifc_exporter.py'
+            exporter_script = str(
+                resources.files('osdag_core.export_ifc').joinpath('subprocess_ifc_exporter.py')
             )
-            exporter_script = os.path.normpath(exporter_script)
 
             result = sp.run(
                 [sys.executable, exporter_script,
