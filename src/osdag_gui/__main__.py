@@ -26,7 +26,7 @@ from PySide6.QtGui import QFontDatabase, QFont, QIcon
 # Disable native file dialogs globally to prevent OpenGL context conflicts
 # This is critical for Linux systems with Intel/Mesa graphics drivers
 QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
-from osdag_core.utils.internet_connectivity import InternetConnectivity
+from .ui.utils.internet_connectivity import InternetConnectivity
 from .ui.windows.launch_screen import OsdagLaunchScreen
 from .ui.utils.theme_manager import ThemeManager
 from .resources import resources_rc
