@@ -6,11 +6,9 @@ include-package-date = true
 [tool.setuptools.packages.find]
 namespaces = true
 where = ["src"]
+exclude = ["osdag_core*"]
 
 [tool.setuptools.package-data]
-"osdag_core.data.doc" = ["**/*.MD", "**/*.md", "**/*.TXT", "**/*.txt"]
-"osdag_core.data.ResourceFiles.images" = ["**/*.png", "**/*.PNG", "**/*.jpg", "**/*.JPG", "**/*.jpeg", "**/*.JPEG"]
-"osdag_core.data.ResourceFiles.Database" = ["*"]
 "osdag_gui.resources" = [
     "**/*.png", "**/*.PNG", "**/*.jpg", "**/*.JPG", "**/*.jpeg", "**/*.JPEG", "**/*.svg",
     "**/*.qss", "**/*.ttf", "**/*.qrc"
@@ -20,7 +18,7 @@ where = ["src"]
 [project]
 name = "osdag"
 dynamic = ["version"]
-dependencies = ["PyQt5", "PySide6", "requests", "pylatex", "numpy", "PyYaml", "PyGithub", "Click", "navcube"]
+dependencies = ["osdag-core @ file:///Users/nishikantmandal007/MDP/Maya_Work/osdag-core", "PyQt5", "PySide6", "requests", "pylatex", "numpy", "PyYaml", "PyGithub", "Click", "navcube", "matplotlib"]
 requires-python = ">= 3.11,<3.13"
 description = "Open steel design and graphics"
 readme = "README.md"
